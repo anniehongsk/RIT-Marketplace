@@ -1,14 +1,76 @@
-import type { Express } from "express";
+import express, { type Express, type Request } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage as dataStorage } from "./storage";
 import { setupAuth } from "./auth";
 import { setupWebsocket } from "./websocket";
 import { z } from "zod";
 import { insertProductSchema, updateChatSchema, insertChatSchema, insertMessageSchema } from "@shared/schema";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Create uploads directory if it doesn't exist
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  
+  // Configure multer for handling file uploads
+  const diskStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, uploadsDir);
+    },
+    filename: function (req, file, cb) {
+      // Create a unique filename with original extension
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = path.extname(file.originalname);
+      cb(null, uniqueSuffix + ext);
+    }
+  });
+  
+  // File filter to only accept image files
+  const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    // Accept only image files
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  };
+  
+  const upload = multer({ 
+    storage: diskStorage, 
+    fileFilter,
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB max file size
+    }
+  });
+  
+  // Serve uploaded files
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
+  
   // Sets up /api/register, /api/login, /api/logout, /api/user
   setupAuth(app);
+  
+  // File upload endpoint
+  app.post("/api/upload", upload.array('images', 5), (req, res) => {
+    if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
+    
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No files uploaded" });
+      }
+      
+      // Return array of file URLs
+      const fileUrls = files.map(file => `/uploads/${file.filename}`);
+      return res.status(200).json({ urls: fileUrls });
+    } catch (error) {
+      console.error("Upload error:", error);
+      return res.status(500).json({ message: "Failed to upload files" });
+    }
+  });
   
   // API routes
   // Accept terms and conditions
@@ -16,7 +78,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     
     try {
-      await storage.acceptTerms(req.user.id);
+      await dataStorage.acceptTerms(req.user.id);
       return res.status(200).json({ success: true });
     } catch (error) {
       return res.status(500).json({ message: "Failed to accept terms" });
