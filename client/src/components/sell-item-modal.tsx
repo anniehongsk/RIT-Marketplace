@@ -37,7 +37,7 @@ interface SellItemModalProps {
 
 // Extended schema with client-side validation
 const formSchema = insertProductSchema.extend({
-  price: z.string().min(1, "Price is required").transform((val) => parseInt(val) * 100), // Convert to cents
+  price: z.coerce.string().min(1, "Price is required").transform((val) => parseInt(val) * 100), // Convert to cents
   images: z.array(z.string()).min(1, "At least one image is required"),
 });
 
@@ -55,7 +55,7 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
     defaultValues: {
       title: "",
       description: "",
-      price: "",
+      price: "" as unknown as number,
       condition: "New",
       category: "Textbooks",
       location: "",
@@ -196,25 +196,49 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
                     <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                       <div className="flex flex-wrap gap-2 mb-4 justify-center">
                         {imageUrls.map((url, index) => (
-                          <img 
-                            key={index}
-                            src={url}
-                            alt={`Item image ${index + 1}`}
-                            className="w-24 h-24 object-cover rounded"
-                          />
+                          <div key={index} className="relative w-24 h-24 group">
+                            <img 
+                              src={url}
+                              alt={`Item image ${index + 1}`}
+                              className="w-24 h-24 object-cover rounded"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeImage(index)}
+                              className="absolute -top-2 -right-2 bg-white rounded-full p-1 shadow-md hover:bg-gray-100"
+                            >
+                              <X className="h-3 w-3 text-gray-700" />
+                            </button>
+                          </div>
                         ))}
+                        
+                        {isUploading && (
+                          <div className="w-24 h-24 flex items-center justify-center bg-gray-100 rounded">
+                            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+                          </div>
+                        )}
                       </div>
+                      
+                      {/* Hidden file input */}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        className="hidden"
+                        accept="image/*"
+                        multiple
+                      />
                       
                       <Button 
                         type="button" 
                         variant="outline" 
-                        onClick={addImageUrl}
-                        disabled={imageUrls.length >= 5}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isUploading || imageUrls.length >= 5}
                       >
                         <ImagePlus className="mr-2 h-4 w-4" />
-                        Add Photo
+                        {imageUrls.length === 0 ? "Add Photos" : "Add More Photos"}
                       </Button>
-                      <p className="text-xs text-gray-400 mt-2">Up to 5 photos</p>
+                      <p className="text-xs text-gray-400 mt-2">Up to 5 photos (JPG, PNG)</p>
                     </div>
                   </FormControl>
                   <FormMessage />
@@ -353,8 +377,8 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
                     <FormItem className="flex items-center space-x-2 space-y-0">
                       <FormControl>
                         <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
+                          checked={field.value as boolean}
+                          onCheckedChange={(checked) => field.onChange(!!checked)}
                         />
                       </FormControl>
                       <FormLabel className="font-normal">Campus Meetup</FormLabel>
@@ -369,8 +393,8 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
                     <FormItem className="flex items-center space-x-2 space-y-0">
                       <FormControl>
                         <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
+                          checked={field.value as boolean}
+                          onCheckedChange={(checked) => field.onChange(!!checked)}
                         />
                       </FormControl>
                       <FormLabel className="font-normal">Delivery (additional details in description)</FormLabel>
@@ -385,8 +409,8 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
                     <FormItem className="flex items-center space-x-2 space-y-0">
                       <FormControl>
                         <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
+                          checked={field.value as boolean}
+                          onCheckedChange={(checked) => field.onChange(!!checked)}
                         />
                       </FormControl>
                       <FormLabel className="font-normal">Pickup (from your location)</FormLabel>
