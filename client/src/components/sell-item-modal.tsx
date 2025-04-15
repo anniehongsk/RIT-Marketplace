@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ImagePlus } from "lucide-react";
+import { ImagePlus, Loader2, X } from "lucide-react";
 
 interface SellItemModalProps {
   open: boolean;
@@ -47,6 +47,8 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -106,19 +108,71 @@ export default function SellItemModal({ open, onClose }: SellItemModalProps) {
     });
   };
   
-  const addImageUrl = () => {
-    // For demo purposes, add a placeholder image URL
-    // In a real application, this would connect to an upload service
-    const placeholderUrls = [
-      "https://via.placeholder.com/300/F76902/FFFFFF?text=RIT+Item+1",
-      "https://via.placeholder.com/300/513127/FFFFFF?text=RIT+Item+2",
-      "https://via.placeholder.com/300/999999/FFFFFF?text=RIT+Item+3",
-      "https://via.placeholder.com/300/F76902/FFFFFF?text=RIT+Item+4",
-      "https://via.placeholder.com/300/513127/FFFFFF?text=RIT+Item+5"
-    ];
+  // Image upload mutation
+  const uploadImage = useMutation({
+    mutationFn: async (formData: FormData) => {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+      });
+      
+      if (!res.ok) {
+        throw new Error(`Upload failed: ${res.statusText}`);
+      }
+      
+      return res.json();
+    },
+    onSuccess: (data) => {
+      // Add the new image URLs to the state and form
+      const updatedUrls = [...imageUrls, ...data.urls];
+      setImageUrls(updatedUrls);
+      form.setValue("images", updatedUrls);
+      setIsUploading(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Upload failed",
+        description: error.message,
+        variant: "destructive",
+      });
+      setIsUploading(false);
+    }
+  });
+  
+  // Handle file input change
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
     
-    const newUrl = placeholderUrls[imageUrls.length % placeholderUrls.length];
-    const updatedUrls = [...imageUrls, newUrl];
+    // Check if adding these files would exceed the 5 image limit
+    if (imageUrls.length + fileList.length > 5) {
+      toast({
+        title: "Too many images",
+        description: `You can only upload a maximum of 5 images. You've selected ${fileList.length} but already have ${imageUrls.length}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Create FormData and append files
+    const formData = new FormData();
+    Array.from(fileList).forEach(file => {
+      formData.append('images', file);
+    });
+    
+    // Upload the files
+    setIsUploading(true);
+    uploadImage.mutate(formData);
+    
+    // Reset the file input
+    event.target.value = '';
+  };
+  
+  // Remove an image
+  const removeImage = (index: number) => {
+    const updatedUrls = [...imageUrls];
+    updatedUrls.splice(index, 1);
     setImageUrls(updatedUrls);
     form.setValue("images", updatedUrls);
   };

@@ -99,7 +99,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (limit) options.limit = parseInt(limit as string);
       if (offset) options.offset = parseInt(offset as string);
       
-      const products = await storage.getProducts(options);
+      const products = await dataStorage.getProducts(options);
       return res.status(200).json(products);
     } catch (error) {
       return res.status(500).json({ message: "Failed to fetch products" });
@@ -109,7 +109,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/products/:id", async (req, res) => {
     try {
       const productId = parseInt(req.params.id);
-      const product = await storage.getProduct(productId);
+      const product = await dataStorage.getProduct(productId);
       
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
@@ -130,7 +130,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Ensure the seller is the current user
       validatedData.sellerId = req.user.id;
       
-      const product = await storage.createProduct(validatedData);
+      const product = await dataStorage.createProduct(validatedData);
       return res.status(201).json(product);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -144,7 +144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     
     try {
-      const products = await storage.getProducts({ sellerId: req.user.id });
+      const products = await dataStorage.getProducts({ sellerId: req.user.id });
       return res.status(200).json(products);
     } catch (error) {
       return res.status(500).json({ message: "Failed to fetch listings" });
@@ -156,7 +156,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (!req.isAuthenticated()) return res.status(401).json({ message: "Unauthorized" });
     
     try {
-      const chats = await storage.getChatsByUser(req.user.id);
+      const chats = await dataStorage.getChatsByUser(req.user.id);
       return res.status(200).json(chats);
     } catch (error) {
       return res.status(500).json({ message: "Failed to fetch chats" });
@@ -170,13 +170,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = insertChatSchema.parse(req.body);
       
       // Check if product exists
-      const product = await storage.getProduct(validatedData.productId);
+      const product = await dataStorage.getProduct(validatedData.productId);
       if (!product) {
         return res.status(404).json({ message: "Product not found" });
       }
       
       // Check if chat already exists between users for this product
-      const existingChat = await storage.getChatBetweenUsers(
+      const existingChat = await dataStorage.getChatBetweenUsers(
         validatedData.productId, 
         validatedData.buyerId, 
         validatedData.sellerId
@@ -191,7 +191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Forbidden" });
       }
       
-      const chat = await storage.createChat(validatedData);
+      const chat = await dataStorage.createChat(validatedData);
       return res.status(201).json(chat);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -206,7 +206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       const chatId = parseInt(req.params.id);
-      const chat = await storage.getChat(chatId);
+      const chat = await dataStorage.getChat(chatId);
       
       if (!chat) {
         return res.status(404).json({ message: "Chat not found" });
@@ -218,11 +218,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const validatedData = updateChatSchema.parse(req.body);
-      const updatedChat = await storage.updateChat(chatId, validatedData);
+      const updatedChat = await dataStorage.updateChat(chatId, validatedData);
       
       // If the chat is marked as completed, mark the product as sold
       if (validatedData.isCompleted) {
-        await storage.markProductAsSold(chat.productId);
+        await dataStorage.markProductAsSold(chat.productId);
       }
       
       return res.status(200).json(updatedChat);
@@ -239,7 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       const chatId = parseInt(req.params.id);
-      const chat = await storage.getChat(chatId);
+      const chat = await dataStorage.getChat(chatId);
       
       if (!chat) {
         return res.status(404).json({ message: "Chat not found" });
@@ -250,7 +250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Forbidden" });
       }
       
-      const messages = await storage.getMessages(chatId);
+      const messages = await dataStorage.getMessages(chatId);
       return res.status(200).json(messages);
     } catch (error) {
       return res.status(500).json({ message: "Failed to fetch messages" });
@@ -262,7 +262,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     try {
       const chatId = parseInt(req.params.id);
-      const chat = await storage.getChat(chatId);
+      const chat = await dataStorage.getChat(chatId);
       
       if (!chat) {
         return res.status(404).json({ message: "Chat not found" });
@@ -284,7 +284,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         senderId: req.user.id,
       });
       
-      const message = await storage.createMessage(validatedData);
+      const message = await dataStorage.createMessage(validatedData);
       return res.status(201).json(message);
     } catch (error) {
       if (error instanceof z.ZodError) {
