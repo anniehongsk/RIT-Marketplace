@@ -1,7 +1,24 @@
+import { db } from "./db";
 import { users, products, chats, messages, type User, type InsertUser, type Product, type InsertProduct, type Chat, type InsertChat, type Message, type InsertMessage, type UpdateChat } from "@shared/schema";
 import session from "express-session";
 import createMemoryStore from "memorystore";
+import connectPgSimple from "connect-pg-simple";
+import { eq, and, like, gte, lte } from "drizzle-orm";
+import { pool } from "./db"; // Only used for PostgreSQL
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
+import SQLiteStore from "connect-sqlite3";
 
+// Get database type from environment
+const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+
+// Create DB directory if it doesn't exist (for SQLite)
+const dbDir = join(process.cwd(), 'db');
+if (!existsSync(dbDir)) {
+  mkdirSync(dbDir, { recursive: true });
+}
+
+// Memory store fallback
 const MemoryStore = createMemoryStore(session);
 
 export interface IStorage {
@@ -40,68 +57,58 @@ export interface IStorage {
   createMessage(message: InsertMessage): Promise<Message>;
   
   // Session store
-  sessionStore: session.SessionStore;
+  sessionStore: session.Store;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private products: Map<number, Product>;
-  private chats: Map<number, Chat>;
-  private messages: Map<number, Message>;
+export class DatabaseStorage implements IStorage {
+  sessionStore: session.Store;
   
-  currentUserId: number;
-  currentProductId: number;
-  currentChatId: number;
-  currentMessageId: number;
-  sessionStore: session.SessionStore;
-
   constructor() {
-    this.users = new Map();
-    this.products = new Map();
-    this.chats = new Map();
-    this.messages = new Map();
-    
-    this.currentUserId = 1;
-    this.currentProductId = 1;
-    this.currentChatId = 1;
-    this.currentMessageId = 1;
-    
-    this.sessionStore = new MemoryStore({
-      checkPeriod: 86400000, // 24 hours
-    });
+    if (DB_TYPE === 'postgres') {
+      // Use PostgreSQL session store
+      const PostgresStore = connectPgSimple(session);
+      this.sessionStore = new PostgresStore({
+        pool,
+        tableName: 'session',
+      });
+    } else {
+      // Use SQLite session store
+      const SqliteStore = SQLiteStore(session);
+      this.sessionStore = new SqliteStore({
+        dir: dbDir,
+        table: 'sessions'
+      });
+    }
   }
-
+  
   // User methods
   async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
   }
-
+  
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username.toLowerCase() === username.toLowerCase(),
-    );
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
   }
-
+  
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.currentUserId++;
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
   }
   
   async acceptTerms(userId: number): Promise<void> {
-    const user = await this.getUser(userId);
-    if (user) {
-      user.acceptedTerms = true;
-      this.users.set(userId, user);
-    }
+    await db.update(users)
+      .set({ acceptedTerms: true })
+      .where(eq(users.id, userId));
   }
-
+  
   // Product methods
   async getProduct(id: number): Promise<Product | undefined> {
-    return this.products.get(id);
+    const result = await db.select().from(products).where(eq(products.id, id));
+    return result[0];
   }
-
+  
   async getProducts(options: { 
     category?: string; 
     condition?: string; 
@@ -112,146 +119,150 @@ export class MemStorage implements IStorage {
     limit?: number;
     offset?: number;
   } = {}): Promise<Product[]> {
-    let products = Array.from(this.products.values());
+    let query = db.select().from(products);
     
-    if (options.sellerId !== undefined) {
-      products = products.filter(product => product.sellerId === options.sellerId);
-    }
+    // Apply filters
+    const filters = [];
     
     if (options.category) {
-      products = products.filter(product => product.category === options.category);
+      filters.push(eq(products.category, options.category));
     }
     
     if (options.condition) {
-      products = products.filter(product => product.condition === options.condition);
+      filters.push(eq(products.condition, options.condition));
     }
     
     if (options.minPrice !== undefined) {
-      products = products.filter(product => product.price >= options.minPrice!);
+      filters.push(gte(products.price, options.minPrice));
     }
     
     if (options.maxPrice !== undefined) {
-      products = products.filter(product => product.price <= options.maxPrice!);
+      filters.push(lte(products.price, options.maxPrice));
+    }
+    
+    if (options.sellerId !== undefined) {
+      filters.push(eq(products.sellerId, options.sellerId));
     }
     
     if (options.search) {
-      const searchLower = options.search.toLowerCase();
-      products = products.filter(product => 
-        product.title.toLowerCase().includes(searchLower) || 
-        product.description.toLowerCase().includes(searchLower)
+      filters.push(
+        or(
+          like(products.title, `%${options.search}%`),
+          like(products.description, `%${options.search}%`)
+        )
       );
     }
     
-    // Sort by newest first
-    products.sort((a, b) => 
-      new Date(b.createdAt || Date.now()).getTime() - 
-      new Date(a.createdAt || Date.now()).getTime()
-    );
-    
-    // Apply pagination if specified
-    if (options.offset !== undefined && options.limit !== undefined) {
-      products = products.slice(options.offset, options.offset + options.limit);
-    } else if (options.limit !== undefined) {
-      products = products.slice(0, options.limit);
+    if (filters.length > 0) {
+      query = query.where(and(...filters));
     }
     
-    return products;
-  }
-
-  async createProduct(insertProduct: InsertProduct): Promise<Product> {
-    const id = this.currentProductId++;
-    const product: Product = { 
-      ...insertProduct, 
-      id, 
-      isSold: false, 
-      createdAt: new Date()
-    };
-    this.products.set(id, product);
-    return product;
-  }
-
-  async updateProduct(id: number, updates: Partial<Product>): Promise<Product | undefined> {
-    const product = await this.getProduct(id);
-    if (!product) return undefined;
+    // Apply pagination
+    if (options.limit !== undefined) {
+      query = query.limit(options.limit);
+    }
     
-    const updatedProduct = { ...product, ...updates };
-    this.products.set(id, updatedProduct);
-    return updatedProduct;
+    if (options.offset !== undefined) {
+      query = query.offset(options.offset);
+    }
+    
+    return await query;
   }
-
+  
+  async createProduct(insertProduct: InsertProduct): Promise<Product> {
+    // For SQLite, we need to handle arrays differently
+    let productToInsert = insertProduct;
+    
+    if (DB_TYPE === 'sqlite') {
+      // Convert arrays to JSON strings for SQLite
+      productToInsert = {
+        ...insertProduct,
+        images: JSON.stringify(insertProduct.images),
+      };
+    }
+    
+    const result = await db.insert(products).values(productToInsert).returning();
+    return result[0];
+  }
+  
+  async updateProduct(id: number, updates: Partial<Product>): Promise<Product | undefined> {
+    const result = await db.update(products)
+      .set(updates)
+      .where(eq(products.id, id))
+      .returning();
+    return result[0];
+  }
+  
   async markProductAsSold(id: number): Promise<Product | undefined> {
     return this.updateProduct(id, { isSold: true });
   }
-
+  
   // Chat methods
   async getChat(id: number): Promise<Chat | undefined> {
-    return this.chats.get(id);
+    const result = await db.select().from(chats).where(eq(chats.id, id));
+    return result[0];
   }
-
+  
   async getChatsByUser(userId: number): Promise<Chat[]> {
-    return Array.from(this.chats.values()).filter(
-      chat => chat.buyerId === userId || chat.sellerId === userId
-    );
+    return await db.select()
+      .from(chats)
+      .where(
+        or(
+          eq(chats.buyerId, userId),
+          eq(chats.sellerId, userId)
+        )
+      );
   }
-
+  
   async getChatsByProduct(productId: number): Promise<Chat[]> {
-    return Array.from(this.chats.values()).filter(
-      chat => chat.productId === productId
-    );
+    return await db.select()
+      .from(chats)
+      .where(eq(chats.productId, productId));
   }
-
+  
   async getChatBetweenUsers(productId: number, buyerId: number, sellerId: number): Promise<Chat | undefined> {
-    return Array.from(this.chats.values()).find(
-      chat => chat.productId === productId && 
-              chat.buyerId === buyerId && 
-              chat.sellerId === sellerId
-    );
+    const result = await db.select()
+      .from(chats)
+      .where(
+        and(
+          eq(chats.productId, productId),
+          eq(chats.buyerId, buyerId),
+          eq(chats.sellerId, sellerId)
+        )
+      );
+    return result[0];
   }
-
+  
   async createChat(insertChat: InsertChat): Promise<Chat> {
-    const id = this.currentChatId++;
-    const chat: Chat = { 
-      ...insertChat, 
-      id, 
-      orderType: null, 
-      isCompleted: false, 
-      createdAt: new Date() 
-    };
-    this.chats.set(id, chat);
-    return chat;
+    const result = await db.insert(chats).values(insertChat).returning();
+    return result[0];
   }
-
+  
   async updateChat(id: number, updates: UpdateChat): Promise<Chat | undefined> {
-    const chat = await this.getChat(id);
-    if (!chat) return undefined;
-    
-    const updatedChat = { ...chat, ...updates };
-    this.chats.set(id, updatedChat);
-    return updatedChat;
+    const result = await db.update(chats)
+      .set(updates)
+      .where(eq(chats.id, id))
+      .returning();
+    return result[0];
   }
-
+  
   // Message methods
   async getMessages(chatId: number): Promise<Message[]> {
-    const messages = Array.from(this.messages.values())
-      .filter(message => message.chatId === chatId)
-      .sort((a, b) => 
-        new Date(a.createdAt || Date.now()).getTime() - 
-        new Date(b.createdAt || Date.now()).getTime()
-      );
-    
-    return messages;
+    return await db.select()
+      .from(messages)
+      .where(eq(messages.chatId, chatId))
+      .orderBy(messages.createdAt);
   }
-
+  
   async createMessage(insertMessage: InsertMessage): Promise<Message> {
-    const id = this.currentMessageId++;
-    const message: Message = { 
-      ...insertMessage, 
-      id, 
-      createdAt: new Date() 
-    };
-    this.messages.set(id, message);
-    return message;
+    const result = await db.insert(messages).values(insertMessage).returning();
+    return result[0];
   }
 }
 
-export const storage = new MemStorage();
+// Helper for conditions
+function or(...conditions: unknown[]) {
+  return { operator: 'or', conditions };
+}
+
+export const storage = new DatabaseStorage();
