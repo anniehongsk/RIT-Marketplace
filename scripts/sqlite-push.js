@@ -1,8 +1,8 @@
 // Simple script to initialize SQLite database
-const { drizzle } = require('drizzle-orm/better-sqlite3');
-const Database = require('better-sqlite3');
-const path = require('path');
-const fs = require('fs');
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
 
 // Make sure the db directory exists
 const dbDir = path.join(process.cwd(), 'db');

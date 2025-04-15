@@ -3,7 +3,7 @@ import { users, products, chats, messages, type User, type InsertUser, type Prod
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import connectPgSimple from "connect-pg-simple";
-import { eq, and, like, gte, lte } from "drizzle-orm";
+import { eq, and, like, gte, lte, or } from "drizzle-orm";
 import { pool } from "./db"; // Only used for PostgreSQL
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
@@ -170,18 +170,8 @@ export class DatabaseStorage implements IStorage {
   }
   
   async createProduct(insertProduct: InsertProduct): Promise<Product> {
-    // For SQLite, we need to handle arrays differently
-    let productToInsert = insertProduct;
-    
-    if (DB_TYPE === 'sqlite') {
-      // Convert arrays to JSON strings for SQLite
-      productToInsert = {
-        ...insertProduct,
-        images: JSON.stringify(insertProduct.images),
-      };
-    }
-    
-    const result = await db.insert(products).values(productToInsert).returning();
+    // For SQLite, we don't need special handling since Drizzle takes care of it
+    const result = await db.insert(products).values(insertProduct).returning();
     return result[0];
   }
   
@@ -258,11 +248,6 @@ export class DatabaseStorage implements IStorage {
     const result = await db.insert(messages).values(insertMessage).returning();
     return result[0];
   }
-}
-
-// Helper for conditions
-function or(...conditions: unknown[]) {
-  return { operator: 'or', conditions };
 }
 
 export const storage = new DatabaseStorage();
